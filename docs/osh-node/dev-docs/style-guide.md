@@ -1,19 +1,22 @@
 ---
-title: Style Guide
+title: OSH Sensor Style Guide
 sidebar_position: 0
 ---
-# OSH Driver Style Guide
+# OSH Sensor Style Guide
 
 ## 1. Purpose and scope
 
-This guide establishes consistent conventions for driver structure, configuration, sensor identity, SWE Common outputs, lifecycle management, connectivity, controls, SensorML, testing, and documentation. It expands the original team style guide with guidance from OSH Core and the published OSH driver-development materials.
+This guide establishes consistent conventions for OpenSensorHub (OSH) sensor driver structure, configuration, sensor identity, SWE Common outputs, lifecycle management, connectivity, controls, SensorML, testing and documentation.
 
-An OSH driver should be maintainable, resilient to communication failures, lifecycle-safe, and interoperable through OGC Sensor Web Enablement (SWE) standards. OSH supports sensors and actuators over a range of interfaces, including serial, USB, Ethernet, Wi-Fi, Bluetooth, and HTTP; the driver should separate transport-specific logic from the data and control interfaces exposed to OSH.
+An OSH sensor driver should be maintainable, resilient to communication failures, lifecycle safe, and interoperable through OGC Sensor  Web Enablement (SWE) standards.
+
+OSH supports sensors and actuators over a range of interfaces, including serial, USB, Ethernet, Wi-Fi, Bluetooth, and HTTP. A sensor driver should separate transport-specific logic from the data and control interfaces exposed to OSH.
 
 
-## 2. Standard driver structure
+## 2. Project Structure and Naming Conventions
 
-A typical Java driver module is organized as follows:
+### 2.1 Standard Driver Structure
+A typical OSH Sensor driver is organized as follows:
 
 ```text
 src/
@@ -28,102 +31,207 @@ src/
 │   └── resources/META-INF/services/
 │       └── org.sensorhub.api.module.IModuleProvider
 └── test/java/org/sensorhub/impl/sensor/<name>/
-    ├── Test<Name>Sensor.java
     └── Test<Name>Parser.java
 ```
 
-Not all drivers require all classes: read-only sensors may have no control, and simple drivers may not need separate parsers. Keep hardware communication, binary parsing, SWE schema construction, and module lifecycle responsibilities logically separate.
+Not all drivers require every class. For example, read-only sensors may  omit a control class, and simple drivers may implement parsing directly without a separate parser class.
 
-### Class naming
+### 2.2 Class Naming
+Use consistent suffixes for driver classes.
 
-| Responsibility | Convention | Example |
-| --- | --- | --- |
-| Sensor module | `<Name>Sensor` | `WeatherSensor` |
-| Configuration | `<Name>Config` | `WeatherConfig` |
-| Data output | `<Name>Output` or `<Purpose>Output` | `WeatherOutput` |
-| Command input | `<Name>Control` or `<Action>Control` | `PTZControl` |
-| Module descriptor | `<Name>Descriptor` | `WeatherDescriptor` |
-| OSGi activator, if used | `Activator` | `Activator` |
+| Responsibility          | Convention                           | Example                                                   |
+|-------------------------|--------------------------------------|-----------------------------------------------------------|
+| Sensor module           | `<Name>Sensor`                       | `AxisCameraSensor`                                        |
+| Configuration           | `<Name>Config`                       | `AxisCameraConfig`                                        |
+| Data output             | `<Name>Output` or `<Purpose>Output`  | `AxisCameraOutput` or `AxisVideoOutput` & `AxisPtzOutput` |
+| Command input           | `<Name>Control` or `<Action>Control` | `PtzControl`                                              |
+| Module descriptor       | `<Name>Descriptor`                   | `AxisCameraDescriptor`                                    |
+| OSGi activator, if used | `Activator`                          | `Activator`                                               |
 
-Prefer `Sensor` to `Driver` for new classes when consistent with nearby modules; existing `Driver` classes do not need renaming solely for style.
+Some existing drivers use a Driver suffix, but the majority use Sensor. New drivers should follow the Sensor convention unless a project requires otherwise.
 
-### Package, field, and stream names
+### 2.3 Package Names
+- Package names must be lowercase.
 
-- Open-source driver package: `org.sensorhub.impl.sensor.<name>`.
-- Organization-specific packages may use their established namespace (for example, `com.georobotix.impl.sensor.<name>`).
-- Package names are lowercase; Java fields and methods use `camelCase`.
-- Output names and SWE field names should be descriptive and stable, for example `weatherObservation`, `windSpeed`, and `platformAltitude`, rather than `data`, `output`, or `plat_alt`.
+- Open-source drivers should use the following namespace:
+  `org.sensorhub.impl.sensor.<name>`.
+
+- Organization-specific drivers may use an established namespace, such as
+  `org.georobotix.impl.sensor.<name>`.
+
+### 2.4 Field And Method Names
+Java fields and methods use `camelCase`.
 
 ```java
+// Good
 private long lastMessageTime;
 private int reconnectAttempts;
 
-public void publishWeatherData() {
-    // ...
-}
+public void publishWeatherData() {}
+
+// Bad
+private long LastMessageTime;
+private int reconnect_attempts;
+
+public void PublishWeatherData() {}
 ```
 
-## 3. Sensor identity
+### 2.5 Output and Field Names
+Output names and SWE field names MUST be descriptive and use `camelCase`.
+```java
+// Good 
+super("location", parent);
+super("platformAltitude", parent);
+super("weatherObservation", parent);
 
-A physical sensor should have a stable, unique identifier across restarts. When a reliable hardware serial number exists, derive the UID from it and a namespace:
+// Bad 
+super("plat_alt", parent);
+super("platformAtt", parent);
+super("data", parent);
+super("output", parent);
+```
+
+Names should describe the physical measurement, observation, or function rather than the transport protocol or implementation detail.
+
+- Output names in SWE Schema should follow `lowerCamelCase`.
+- Definitions should be `UpperCamelCase`
+- Labels should be
+```java
+.addField("windSpeed", fac.createQuantity()
+    .definition(SWEHelper.getCfUri("WindSpeed"))
+    .label("Wind Speed")
+    .uomCode("m/s"))
+```
+
+
+## 3. Sensor Identity
+A physical sensor should have a stable, unique identifier across restarts.
+
+When a reliable hardware serial number exists, the driver should derive its UID from that identifier and a consistent namespace.
 
 ```java
-generateUniqueID("urn:osh:sensor:example:weather:", config.serialNumber);
+generateUniqueID("urn:osh:sensor:georobotix:weather:", config.serialNumber);
 generateXmlID("WEATHER", config.serialNumber);
 ```
+The recommended UID pattern is:
 
-## 4. Configuration classes and UI metadata
+`urn:osh:sensor:<organization>:<sensor-identifier>`
 
-Use the appropriate OSH configuration base class, commonly `SensorConfig`. Configuration contains user-editable settings, not live sockets, threads, parser instances, or connection state. OSH uses configuration metadata to build its administration UI, so user-facing settings should have clear labels and descriptions.
+The namespace and identifier format must be consistent with the organization's identity conventions.
+
+Drivers must not generate a new random UID on every initialization when doing so would change the identity of the same physical sensor.
+
+
+## 4. Configuration Metadata and Validation
+
+### 4.1 Configuration Classes
+Configuration classes should extend the appropriate OSH configuration base class, `SensorConfig`.
+
+Configuration classes must contain user-configuratble settings rather tahn runtime state. It MUST NOT be used to store live sockets, device connections, threads, or other transient resources.
 
 ```java
+// Good
 @DisplayInfo(
     label = "Reconnect Period",
     desc = "Delay in milliseconds between connection attempts"
 )
 public long reconnectPeriod = 5000;
+
+// Bad
+public Thread readerThread;
+public DeviceConnection connection;
+public Socket socket;
 ```
 
-### Common field patterns
+### 4.2  Configuration UI Metadata
+Every user-facing configuration field must have appropriate descriptive metadata so that OSh can present a meaningful admin interface.
 
-**Required text** (use the annotation supported by your OSH version):
+Labels should be concise, and descriptions should explain what the field configures, including units or constraints where relevant.
 
+**Required text**
+Use the required field annotation
 ```java
 @DisplayInfo.Required
 @DisplayInfo(label = "Serial Number", desc = "Device serial number")
 public String serialNumber;
 ```
 
-**Remote network address:**
+**Single-line and multiline text:**
+Use a single-line text field for short values such as identifiers. Use a multiline text field when the value is expected to contain longer text.
+```java
+// todo add single line
 
+// todo add multiline
+```
+
+**Remote network address:**
 ```java
 @DisplayInfo(label = "IP Address", desc = "Address of the remote device")
 @DisplayInfo.FieldType(DisplayInfo.FieldType.Type.REMOTE_ADDRESS)
 @AddressType(NetworkType.IP)
 public String remoteAddress;
+
+@DisplayInfo(label = "IP Address", desc = "IP of local network interface to bind to")
+@DisplayInfo.FieldType(DisplayInfo.FieldType.Type.LOCAL_ADDRESS)
+@AddressType(NetworkType.IP)
+public String ip;
 ```
+Supported address types may include IP, Ethernet, Wi-Fi, cellular, Bluetooth, BLE, Zigbee, VPN.
 
 **Password:**
-
 ```java
 @DisplayInfo(label = "Password", desc = "Authentication password")
 @DisplayInfo.FieldType(DisplayInfo.FieldType.Type.PASSWORD)
 public String password;
 ```
+Credentials must not be logged or exposed in error messages.
 
 **Port range:**
-
 ```java
 @DisplayInfo(label = "UDP Listen Port", desc = "Local UDP port")
 @DisplayInfo.ValueRange(min = 0, max = 65535)
 public int udpListenPort = 14550;
 ```
+The valid port range must reflect the actual requirements, A value of zero should be allowed only when the transport supports dynamically assigned ports.
 
-Other OSH metadata field types include local addresses, module IDs, system UIDs, and tables. Apply them only when appropriate for the value. Prefer descriptive defaults for optional settings and validate any security-sensitive or network-sensitive values before use. **API note:** Some OSH examples use `@Required` while others use `@DisplayInfo.Required`; check the annotations in the project's actual dependency version rather than combining them blindly.
+**Module references:**
+```java
+@DisplayInfo.Required
+@DisplayInfo.ModuleType(IObsSystemDatabase.class)
+@DisplayInfo.FieldType(DisplayInfo.FieldType.Type.MODULE_ID)
+@DisplayInfo(label = "Database Module Id", desc = "The module id of the data store module to use as the archived data store to read from")
+public String moduleId;
+```
 
-## 5. Configuration validation
+**System UIDs:**
+```java
+@DisplayInfo.Required
+@DisplayInfo.FieldType(DisplayInfo.FieldType.Type.SYSTEM_UID)
+@DisplayInfo(label = "System Unique Id", desc = "The unique id of the system for which archive data is to be transferred")
+public String uniqueId;
+```
 
-Validate required fields and basic constraints during `doInit()` before opening network or hardware resources. Errors should name the invalid field and explain what is expected.
+**Table or structured selection:**
+```java
+@DisplayInfo.Required
+@DisplayInfo.FieldType(DisplayInfo.FieldType.Type.TABLE)
+@DisplayInfo(label = "Protocol Scheme", desc = "The protocol scheme to use to stream video in native formats")
+public Scheme scheme;
+```
+
+Other OSH metadata field types include local addresses, module IDs, system UIDs, and tables. Apply them only when appropriate for the value.
+
+### 4.3 Defaults
+Optional settings should have sensible defaults.
+
+```java
+@DisplayInfo(label = "Reconnect Period", desc = "Delay in milliseconds between connection attempts")
+public long reconnectPeriod = 5000;
+```
+Defaults must not silently produce unexpected behavior.
+
+### 4.4 Configuration Validation
+Drivers MUST validate required fields and basic constraints during `doInit()` before opening network connections or acquiring hardware resources. Errors should name the invalid field and explain what is expected.
 
 ```java
 @Override
@@ -136,21 +244,33 @@ protected void doInit() throws SensorHubException {
     if (config.serialNumber == null || config.serialNumber.isBlank()) {
         throw new SensorHubException("Serial number must be specified");
     }
-
-    // Construct and register outputs and controls here.
 }
 ```
+Validation should cover:
+- Required values and empty strings
+- Numeric ranges and timeout values
+- File paths and URL syntax
+- Credential requirements
+- Transport constraints
+- Mutually dependent configuration fields
 
-For ports, ranges, paths, timeouts, and credentials, check both syntactic validity and semantic constraints. Avoid logging passwords or access tokens in validation errors.
+Security-sensitive values must not be included in validation error messages.
 
-## 6. SWE Common output schemas
 
-Outputs should extend the appropriate OSH output implementation, often `AbstractSensorOutput<SensorType>`. Every output exposes a SWE Common `DataComponent` describing the structure of its observations. The published OSH driver-development material emphasizes descriptive names, definition URIs, labels, descriptions, and units where applicable.
+## 5. SWE Common Schemas and Semantic Definitions
 
-Illustrative schema construction:
+### 5.1 Output Classes
+Every data output must extend the appropriate OSH output implementation, `AbstractSensorOutput<SensorType>`
+
+Each output must expose SWE Common `DataComponent` describing the structure and meaning of its observations.
+
+The specific output base class and publication API must be selected based on the target OSH version and the data being published.
+
+### 5.2 SWE Builder API
+Drivers should use the SWE Builder API and available OSH helpers to construct the schemas:
 
 ```java
-dataRecord = fac.createRecord()
+dataStruct = fac.createRecord()
     .name("windObservation")
     .definition(SWEHelper.getPropertyUri("WindObservation"))
     .addField("time", fac.createTime().asSamplingTimeIsoUTC().build())
@@ -162,72 +282,125 @@ dataRecord = fac.createRecord()
         .build())
     .build();
 ```
+The example illustrates schema conventions.
 
-| Metadata | Guidance |
-| --- | --- |
-| Name | Required for identifiable record/field structure |
-| Definition URI | Use a meaningful, stable semantic definition |
-| Label | Provide a human-readable name |
-| Description | Explain what is measured or represented |
-| Unit of measure | Include for quantities; use appropriate unit syntax |
-| Allowed values | Specify when relevant for categorical values |
+### 5.3 Required Field Metadata
+Each SWE field should include the following metadata:
 
-Do not reuse an ontology definition that misrepresents the data. If a field is unavailable, represent it consistently with the schema and encoding rather than publishing fabricated zero values.
+| Property        | Requirement                                            |
+|-----------------|--------------------------------------------------------|
+| Name            | Required for identifiable record/field structure       |
+| Definition      | Use a meaningful, stable semantic definition           |
+| Label           | Should provide a human-readable name                   |
+| Description     | Should explain the represented value                   |
+| Unit of measure | Must be specified for physical quantities              |
+| Allowed values  | Should be specified for constrained categorical values |
 
-### SWE Common type selection
+Definition URIs must be semantically appropriate. A field must not reuse an ontology definition that misrepresents its data.
 
-| Type | Use for | Example |
-| --- | --- | --- |
+If a measurement is unavailable, the driver must represent it consistently with the declared schema and encoding rather than publishing a fabricated zero value.
+
+### 5.4 SWE Common Type Selection
+Drives must select SWE Common types according to the meaning of the data.
+
+| Type       | Use for                           | Example                 |
+|------------|-----------------------------------|-------------------------|
 | `Quantity` | Continuous measurement with units | Temperature, wind speed |
-| `Count` | Discrete integer | Packet count |
-| `Category` | Value from a defined vocabulary | Alarm level |
-| `Boolean` | True/false state | Tamper detected |
-| `Text` | Free-form text | Status message |
-| `Time` | Timestamp | Sampling time |
+| `Count`    | Discrete integer                  | Packet count            |
+| `Category` | Value from a defined vocabulary   | Alarm level             |
+| `Boolean`  | True/false state                  | Tamper detected         |
+| `Text`     | Free-form text                    | Status message          |
+| `Time`     | Timestamp                         | Sampling time           |
 
-Use available helpers such as `SWEHelper`, `GeoPosHelper`, or domain-specific helpers before manually recreating standard structures. For example, a geodetic location should generally use the location-vector helper rather than ad hoc latitude, longitude, and altitude fields. Confirm coordinate reference system, axis order, and units.
+Examples
+- temperature --> Quantity
+- packetCount --> Count
+- alarmLevel --> Category
+- connected --> Boolean
+- statusMessage --> Text
+- samplingTime --> Time
 
-## 7. Output and control registration
+The selected type must be compatible with the actual data and its encoding.
 
-Create and register data outputs and control inputs during initialization so OSH can discover their interfaces before the module starts streaming.
+### 5.5 Semantic Definitions and Ontologies
+Use the appropriate OSH ontology helper where available.
+
+| Ontology         |   | Use When:                                                                 |
+|------------------|:--|---------------------------------------------------------------------------|
+| getEpsgUri()     |   | Coordinate reference systems and spatial reference definition             |
+| getQudtUri()     |   | Quantities and units represented by QUDT                                  |
+| getCfUri()       |   | Climate, forecast, atmospheric properties defined by CF conventions       |
+| getDBpediaUri()  |   | General concepts when an appropriate definition exists                    |
+| getPropertyUri() |   | Other properties not represented by a more appropriate available ontology |
+
+Developers should prefer stable, semantic defintiions where available. A fallback property URI must not misrepresent the meaning of the field.
+
+### 5.6 Predefined OSH Helpers
+Drivers should use existing helpers such as SWEHelper, GeoPosHelper, VideoCamHelper, SMLHelper, RasterHelper, VectorHelper, RadHelper, or other domain-specific helpers where appropriate.
+
+For example, spatial data should use an appropriate predefined structure rather than manually recreating a standard representation.
 
 ```java
-weatherOutput = new WeatherOutput(this);
-addOutput(weatherOutput, false);
-weatherOutput.doInit();
+GeoPosHelper geo = new GeoPosHelper();
 
-ptzControl = new PTZControl(this);
-addControlInput(ptzControl, false);
+dataRecord.addField("location", geo.createLocationVectorLLA().build());
 ```
 
-The `addOutput(output, boolean)` flag distinguishes status outputs from observation outputs in OSH Core; use `true` for status and `false` for regular observations when supported by the target version.
+
+## 6. Output and Control Registration
+Outputs and control inputs must be created and registered during initialization so OSH can discover their interface before the module starts streaming.
+
+```java
+@Override
+public void doInit() throws SensorHubException {
+    super.doInit();
+    // Validate configuration and intitialze module metadata.
+    
+    weatherOutput = new WeatherOutput(this);
+    addOutput(weatherOutput, false);
+    weatherOutput.doInit();
+
+    ptzControl = new PTZControl(this);
+    addControlInput(ptzControl);
+}
+```
+
+### 6.1 Status vs Data Outputs
+The boolean argument to `addOutput(output, boolean)` distinguishes status outputs from observation outputs.
 
 ```java
 addOutput(weatherOutput, false);
 addOutput(deviceStatusOutput, true);
 ```
 
-Avoid dynamically changing stream names or field definitions after clients have subscribed unless the OSH API and consumers explicitly support the change.
+Use the `false` flag for observation data and `true` for status outputs.
+Drivers should expost status outputs when they provide useful device or operational status information. They must not misrepresent ordinary measurements as module status.
 
-## 8. Module lifecycle
 
-OSH modules have separate initialization, start, and stop phases. Keep their responsibilities distinct.
+## 7. Lifecycle
+OSH modules have distinct initialization, start, stop, and cleanup phases. Driver must keep their responsibilities separate.
 
-| Phase | Expected responsibilities |
-| --- | --- |
-| `doInit()` | Validate config, establish identity, create SensorML metadata, register outputs and controls; avoid beginning data publication |
-| `doStart()` | Establish required connections, start reading/subscribing, and begin publishing when ready |
-| `doStop()` | Stop polling and subscriptions, release device and network resources, cancel tasks, and leave the driver safe to restart |
+| Phase       | Expected responsibilities                                                                                                       |
+|-------------|---------------------------------------------------------------------------------------------------------------------------------|
+| `doInit()`  | Validate config, establish identity, create SensorML metadata, register outputs and controls                                    |
+| `doStart()` | Establish required connections, start reading/subscribing, and begin publishing when ready                                      |
+| `doStop()`  | Stop polling and subscriptions, release device and network resources, cancel tasks, and leave the sensor module safe to restart |
+| `cleanup()` | Release any remaining resources not released during the stop path                                                               |                                                              |
 
-**Connection policy:** For a driver that requires a live device to operate, do not report a successful operational start when the device is unreachable. Whether `doStart()` blocks, throws a `SensorHubException`, or transitions through a reconnecting state depends on the intended module behavior and OSH version. Document the policy and ensure module state matches actual readiness.
+### 7.1 Connection Policy
+For a sensor module that requires a live device to operate, do not report a successful operational start when the device is unreachable.
+Whether `doStart()` blocks, throws a `SensorHubException`, or transitions through a reconnecting state depends on the intended module behavior and OSH version. Document the policy and ensure module state matches actual readiness.
 
-**Startup observations:** Do not publish device measurements during `doInit()` merely because the SDK emits an initial callback. Register listeners and start accepting data in the appropriate start phase, or gate callbacks until the driver is started.
+### 7.2 Startup Observations
+Drivers must not publish device measurements during doInit()
+Register listeners and start accepting data in the appropriate start phase, or gate callbacks until the sensor module is started.
 
-**Restartability:** A driver should tolerate `init → start → stop → start` without duplicate listeners, orphaned threads, or stale connections.
+### 7.3 Restartability
+A driver must tolerate the supported lifecycle sequence.
+Repeated stop operations and failed startup must leave the driver in a safe state. Drivers must not create duplicate listeners, stale connections or competing
 
-### Connectivity and `isConnected()`
-
-`isConnected()` should reflect the actual connection or readiness state for the driver, not return `true` unconditionally.
+### 7.4 Connectivity and isConnected()
+`isConnected()` must reflect the actual connection or readiness state of the driver. It must not return `true` unconditionally.
 
 ```java
 @Override
@@ -236,44 +409,32 @@ public boolean isConnected() {
 }
 ```
 
-The example is pseudocode: replace `isOpen()` with the transport's real health check. A socket existing in memory is not necessarily evidence that the remote sensor is responsive. For push-only or connectionless transports, document the chosen readiness signal (for example, recent heartbeat or last valid packet).
+The `isOpen()` method is illustrative and must be replaced with actual health check.
+A socket existing in memory is not necessarily evidence that the remote sensor is responsive. For push-only or connectionless transports, document the chosen readiness signal (for example, recent heartbeat or last valid packet).
 
-## 9. Connection management and recovery
 
-- Use bounded connection attempts or a clearly documented retry policy.
-- Respect configured connection timeouts and reconnect intervals.
-- Avoid tight retry loops; use backoff where appropriate.
-- Report failures through OSH's status/error facilities.
-- After a recoverable disconnect, stop stale reads and close failed resources before reconnecting.
-- Never run simultaneous reconnect attempts against the same device unless explicitly designed for it.
-- Stop all retry activity promptly when the module is stopped.
+## 8. Connectivity, RobustConnection, and Recovery
+Drivers must have defined policy for connection failures and recovery.
 
-`AbstractSensorModule` provides helper methods for automatic reconnection; prefer those where suitable instead of creating an unrelated retry framework. See the [AbstractSensorModule source](https://github.com/opensensorhub/osh-core/blob/master/sensorhub-core/src/main/java/org/sensorhub/impl/sensor/AbstractSensorModule.java).
+### 8.1 Robust Connection
 
-## 10. Thread and callback management
+### 8.2 Recovery
 
-- Give background tasks clear ownership and lifecycle boundaries.
-- Use an executor, scheduler, or SDK callback model appropriate to the driver rather than spawning unmanaged threads.
-- Make shared running/connected state thread-safe when callbacks can occur concurrently.
-- Do not block the module's control thread indefinitely on reads, sleeps, or network operations.
-- Unregister listeners and close streams during stop, even after partial startup failure.
-- Prevent callbacks from publishing data after stop or after outputs have been disposed.
-- Avoid busy waiting; use blocking I/O, callbacks, or scheduled polling.
+## 9. Threading and Callback Safety
 
-Where an SDK owns callback threads, do not assume callbacks arrive serially. Ensure parsers and output buffers are safe for the actual concurrency model.
 
-## 11. Logging, status, and errors
+## 10. Logging, Status, and Error Handling
+Drivers should use the appropriate mechanism for the intended audience.
 
-Use the appropriate mechanism for the intended audience:
+| Mechanism                | Purpose                                                   |
+|--------------------------|-----------------------------------------------------------|
+| `getLogger().debug(...)` | Detailed developer diagnostics                            |
+| `getLogger().info(...)`  | Significant normal lifecycle events                       |
+| `reportStatus(...)`      | Current user-visible module status                        |
+| `reportError(...)`       | Module-level failure requiring attention                  |
+| `clearError()`           | Clear a previously reported error after verified recovery |
 
-| Mechanism | Purpose |
-| --- | --- |
-| `getLogger().debug(...)` | Detailed developer diagnostics |
-| `getLogger().info(...)` | Significant normal lifecycle events |
-| `reportStatus(...)` | Current user-visible module status |
-| `reportError(...)` | Module-level failure requiring attention |
-| `clearError()` | Clear a previously reported error after verified recovery |
-
+Examples:
 ```java
 getLogger().debug("Received packet of {} bytes", packetLength);
 getLogger().info("Connected to sensor at {}:{}", host, port);
@@ -281,24 +442,31 @@ reportStatus("Connecting to sensor...");
 reportError("Cannot reach sensor", exception, true);
 ```
 
-Use parameterized logging, include actionable context, and avoid excessive per-packet `info` logs. Never log secrets, raw authentication headers, or sensitive device payloads without an explicit operational reason. Do not clear an error until the underlying condition has actually recovered.
+Drivers should:
+- Use parameterized logging
+- Include actionable diagnostic context
+- Avoid excessive info logs
+- Report user relevant connection adn recovery states
+- Distinguish expected communication failures from unrecoverable module failures.
 
-## 12. Publishing observations
+Drivers must not log passwords, access tokens, raw authentication headers or sensitive device payloads.
 
-Publish observations only after the module has started and the relevant output is initialized. The published data must match the output's SWE schema and encoding.
+An error must not be cleared until the underlying condition has actually recovered.
 
-- Parse and validate the complete device message before publishing.
-- Preserve measurement timestamps supplied by the sensor when trustworthy; otherwise use a clearly defined reception time policy.
-- Convert units to match the schema (for example, millimetres to metres) before publication.
-- Handle sentinel values, malformed packets, missing measurements, and signed integer fields explicitly.
-- Do not publish partially filled records unless optional/missing values are supported by the schema.
-- Update the output's latest observation and notify listeners using the API provided by the target OSH version.
-- Avoid sharing mutable data blocks between asynchronous publications unless safely copied or synchronized.
 
-**Implementation note:** Exact record-allocation and `publish`/event method names vary across driver implementations; use an existing driver in the same `osh-core` version as the reference rather than copying a generic snippet.
+## 11. Observation Publishing
+Publish observations should only happen after the module has started and the relevant output has been initialized and registered.
+The published data must match the output's SWE schema and encoding.
 
-## 13. Control inputs
+```java
+eventHandler.publish(new DataEvent(latestRecordTime, Output.this, dataBlock));
+```
 
+### 11.1 How often to publish
+This depends on how often the sensor receives data to be published. Read the spec.
+
+
+## 12. Control Inputs and Command Execution
 For sensors with commands or actuators, create a dedicated control interface with a defined SWE command schema.
 
 - Validate command parameters, units, bounds, and enumerated values.
@@ -311,69 +479,86 @@ For sensors with commands or actuators, create a dedicated control interface wit
 
 For a PTZ camera, for example, a preset command should validate the requested preset and report whether the device accepted or executed the request according to its protocol.
 
-## 14. Module descriptor and discovery
 
+## 13. Module Discovery and Packaging.
 Provide a descriptor implementing the module-provider contract expected by your OSH version and register it using Java's service-provider mechanism:
 
 ```text
 src/main/resources/META-INF/services/org.sensorhub.api.module.IModuleProvider
 ```
 
-The service file should contain the fully qualified provider class name, one per line. Ensure the module can be discovered by the OSH runtime after packaging; a correct Java class without the service registration may not appear in the module selection UI.
 
-## 15. SensorML description
+## 14. SensorML Metadata and Position
+`updateSensorDescription()` should describe the physical sensor or system.
 
-`updateSensorDescription()` should describe the physical sensor or system rather than merely repeat application configuration. Include verified information when available:
-
+Include verified information when available:
 - Manufacturer, model, and serial number.
 - Hardware and firmware versions.
 - Stable identifiers and meaningful classifiers.
 - Physical characteristics and capabilities.
 - Position, orientation, and other relevant metadata.
-- Input/output and command interfaces represented consistently with the driver.
+- Input/output and command interfaces represented consistently with the sensor module.
 
-OSH Core's `AbstractSensorModule` provides a default SensorML description and can include configured static position and orientation, as well as a feature of interest for static location. Override or extend it only when needed. Call `notifyNewDescription()` when the description changes at runtime and the API requires notifying consumers.
+Call `notifyNewDescription()` when the description changes at runtime.
 
-Do not invent metadata values that the device or configuration cannot substantiate.
+### 14.1 Features of Interest
 
-## 16. Security and input validation
+### 14.2 Static vs Moving Features
 
-- Treat network payloads, serial frames, and configuration strings as untrusted input.
-- Validate message length, framing, checksums where applicable, numeric ranges, and encoding before parsing fields.
-- Bound buffers, queue sizes, retries, and payload allocations.
-- Use TLS and credential-handling facilities supported by the transport and OSH environment.
-- Avoid hard-coded passwords and secrets in source code or sample configurations.
-- Minimize privileges and requested Android permissions to those the driver requires.
-- Protect against malformed device data crashing the reader thread or entire hub.
 
-## 17. Testing requirements
+## 15. Security
+### 15.1 Credentials and Secrets
+### 15.2 Network Communication
+### 15.3 Incoming Data
+### 15.4
 
-At minimum, test the following behaviors where applicable:
 
-| Area | Expected tests |
-| --- | --- |
-| Configuration | Missing required values, invalid ranges, sensible defaults |
-| Parsing | Valid frames, truncated frames, corrupt frames, endianness, signed values, sentinel values |
-| SWE schema | Field names, definitions, units, encoding and data compatibility |
-| Lifecycle | Initialize, start, stop, restart, repeated stop, failed startup |
-| Connectivity | Device unavailable at start, disconnect during streaming, reconnect, timeout |
-| Publishing | No observations before start or after stop; correct timestamps and units |
-| Controls | Valid command, invalid command, timeout, device rejection |
-| Cleanup | No duplicate listeners, leaked sockets, lingering tasks or threads |
+## 16. Testing and Acceptance Criteria
+Every driver must include automated tests appropriate to its functionality. At minimum, tests should cover the following areas.
 
-Prefer deterministic parser and lifecycle unit tests without hardware. Supplement them with integration tests against real supported devices and firmware. Record the hardware and firmware combinations actually verified.
+| Area          | Expected tests                                                                             |
+|---------------|--------------------------------------------------------------------------------------------|
+| Configuration | Missing required values, invalid ranges, sensible defaults                                 |
+| Parsing       | Valid frames, truncated frames, corrupt frames, endianness, signed values, sentinel values |
+| SWE schema    | Field names, definitions, units, encoding and data compatibility                           |
+| Lifecycle     | Initialize, start, stop, restart, repeated stop, failed startup                            |
+| Connectivity  | Device unavailable at start, disconnect during streaming, reconnect, timeout               |
+| Publishing    | No observations before start or after stop; correct timestamps and units                   |
+| Controls      | Valid command, invalid command, timeout, device rejection                                  |
+| Cleanup       | No duplicate listeners, leaked sockets, lingering tasks or threads                         |
+| Security      |                                                                                            |
+| Discovery     |                                                                                            |
 
-## 18. Driver README requirements
 
-Each driver should include a README that allows another developer or operator to configure and run it without relying on the original author. Include:
+## 17. README and Operational Documentation
+Each driver must include a README that allows another developer or operator to configure and run it without knowing how the driver works.
 
-1. Purpose and supported device capabilities.
-2. **Tested and verified** hardware models and firmware versions.
-3. Required OSH version and dependencies.
-4. Hardware wiring, pairing, network, or authentication prerequisites.
-5. Installation and module discovery instructions.
-6. Configuration example with safe placeholder credentials.
-7. Outputs, units, and supported commands.
-8. Startup and reconnect behavior.
-9. Known limitations and troubleshooting steps.
-10. How to run tests and reproduce sample data.
+The README must document:
+1. Purpose and supported device capabilities
+2. Tested and verified hardware models and firmware versions
+3. Hardware wiring, pairing, network, and authentication prerequisites, where applicable
+4. Configuration examples using safe placeholder credentials.
+5. Known limitations and troubleshooting steps
+6. How to run tests and reproduce sample data.
+
+
+## 18. Versioning and Compatibility
+Drivers should use Semantic Versioning for releases.
+The recommended version format is: `MAJOR.MINOR.PATCH`
+
+| Version | Example | Meaning                           |
+|---------|---------|-----------------------------------|
+| Major   | 1.0.0   | Breaking changes                  |
+| Minor   | 0.1.0   | Backward compatible functionality |
+| Patch   | 0.0.2   | Backward compatible bug fixes     |
+
+New drivers must start at 0.0.1 when following the initial-release policy.
+
+Breaking changes must be documented in release notes.
+
+Examples of breaking changes (Major)
+- Output schema changing (field names/ uom/)
+  Examples of added functionality (Minor)
+-
+Examples of bug fixes (Patch)
+- Output schema changing (label/ definition)
